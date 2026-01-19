@@ -1,40 +1,10 @@
 import json
 import logging
 
-from kubernetes.client.rest import ApiException
-
-from tests.helper.k8s_client_helper import configure_k8s_client
 from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
 
-
 class TestCheck:
-    def test_001_check_label_tier_web_added_with_library(self, json_input):
-        client = configure_k8s_client(json_input)
-        namespace = json_input["namespace"]
-
-        try:
-            pods = client.list_namespaced_pod(namespace=namespace)
-            for pod in pods.items:
-                labels = pod.metadata.labels or {}
-                if labels.get("app") in ["v1", "v2"]:
-                    assert labels.get("tier") == "web", (
-                        f"Pod '{pod.metadata.name}' with 'app={labels.get('app')}' "
-                        "is missing the 'tier=web' label"
-                    )
-                    logging.info(
-                        "Pod '%s' with 'app=%s' has 'tier=web'",
-                        pod.metadata.name,
-                        labels.get("app"),
-                    )
-        except ApiException as exc:
-            if exc.status == 404:
-                logging.info(
-                    "No pods discovered in namespace '%s'. Skipping.", namespace
-                )
-            else:
-                raise
-
-    def test_002_verify_label_tier_web_added_with_kubectl(self, json_input):
+    def test_001_verify_label_tier_web_added_with_kubectl(self, json_input):
         logging.debug("Initiating test_002_verify_label_tier_web_added_with_kubectl")
         kube_cfg = build_kube_config(
             json_input["cert_file"], json_input["key_file"], json_input["host"]

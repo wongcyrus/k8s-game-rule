@@ -84,14 +84,15 @@ def json_input(request):
                 return result
         else:
             with open(
-                "/workspaces/k8s-game-rule/k8s-configure/endpoint.txt",
+                "/home/developer/Documents/data-disk/k8s-game-rule/k8s-configure/endpoint.txt",
                 "r",
                 encoding="utf-8",
             ) as endpoint_file:
                 host = endpoint_file.read().strip()
             result = {
-                "cert_file": "/workspaces/k8s-game-rule/k8s-configure/client.crt",
-                "key_file": "/workspaces/k8s-game-rule/k8s-configure/client.key",
+                "cert_file": "~/.minikube/profiles/minikube/client.crt",
+                "key_file": "~/.minikube/profiles/minikube/client.key",
+                "ca_file": "~/.minikube/ca.crt",
                 "host": host,
             }
 

@@ -8,8 +8,9 @@ from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
 
 
 def _deploy_generic(json_input, template_file, generated_file, caller_folder):
+    ca_file = json_input.get("ca_file")
     kube_config = build_kube_config(
-        json_input["cert_file"], json_input["key_file"], json_input["host"]
+        json_input["cert_file"], json_input["key_file"], json_input["host"], ca_file
     )
 
     template_path = os.path.join(caller_folder, template_file)

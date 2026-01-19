@@ -2,40 +2,11 @@ import base64
 import json
 import logging
 
-from tests.helper.k8s_client_helper import configure_k8s_client
 from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
 
-
 class TestCheck:
-    def test_001_check_secret_client(self, json_input):
-        k8s_client = configure_k8s_client(json_input)
-        namespace = json_input["namespace"]
-        secret_name = "ilovek8s"
 
-        logging.info("Using namespace: %s", namespace)
-        logging.info(
-            "Checking Secret '%s' in namespace '%s' using client",
-            secret_name,
-            namespace,
-        )
-
-        # 验证 Secret
-        try:
-            secret = k8s_client.read_namespaced_secret(
-                name=secret_name, namespace=namespace
-            )
-        except Exception as e:
-            logging.error("Failed to get Secret '%s': %s", secret_name, str(e))
-            assert False, f"Failed to get Secret '{secret_name}': {str(e)}"
-
-        # 验证 Secret 中的 API_KEY 值
-        api_key_value = base64.b64decode(secret.data["API_KEY"]).decode()
-        assert (
-            api_key_value == "ilovek8s"
-        ), f"Expected API_KEY to be 'ilovek8s', but got '{api_key_value}'."
-        logging.info("Secret '%s' has the correct API_KEY value.", secret_name)
-
-    def test_002_check_secret_kubectl(self, json_input):
+    def test_001_check_secret_kubectl(self, json_input):
         logging.debug("Starting test_002_check_secret_kubectl")
         kube_config = build_kube_config(
             json_input["cert_file"], json_input["key_file"], json_input["host"]

@@ -1,34 +1,39 @@
+import json
 import logging
 
-from tests.helper.k8s_client_helper import configure_k8s_client
+from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
 
 
 class TestCheck:
-    def test_001_check_resourcequota_client(self, json_input):
-        k8s_client = configure_k8s_client(json_input)
+    def test_001_check_resourcequota_kubectl(self, json_input):
+        logging.debug("Starting test_001_check_resourcequota_kubectl")
+        kube_config = build_kube_config(
+            json_input["cert_file"], json_input["key_file"], json_input["host"]
+        )
         namespace = json_input["namespace"]
         resourcequota_name = "resource-quota"
 
-        # 验证 ResourceQuota
-        try:
-            logging.info(
-                "Checking ResourceQuota '%s' in namespace '%s' using client",
-                resourcequota_name,
-                namespace,
-            )
-            resourcequota = k8s_client.read_namespaced_resource_quota(
-                name=resourcequota_name, namespace=namespace
-            )
-        except Exception as e:
-            logging.error(
-                "Failed to get ResourceQuota '%s': %s", resourcequota_name, str(e)
-            )
-            assert (
-                False
-            ), f"Failed to get ResourceQuota '{resourcequota_name}': {str(e)}"
+        logging.info(f"Using namespace: {namespace}")
+        logging.info(f"Checking ResourceQuota '{resourcequota_name}' in namespace '{namespace}' using kubectl")
 
-        # 验证 ResourceQuota 中的硬性限制
-        hard = resourcequota.spec.hard
+        # Use kubectl to get ResourceQuota
+        command = (
+            f"kubectl get resourcequota {resourcequota_name} -n {namespace} -o json"
+        )
+        result = run_kubectl_command(kube_config, command)
+
+        # Parse kubectl output JSON
+        resourcequota = json.loads(result)
+
+        # Verify ResourceQuota content
+        assert resourcequota["apiVersion"] == "v1", "Incorrect apiVersion."
+        assert resourcequota["kind"] == "ResourceQuota", "Incorrect kind."
+        assert (
+            resourcequota["metadata"]["name"] == resourcequota_name
+        ), "Incorrect metadata.name."
+
+        # Verify hard limits in ResourceQuota
+        hard = resourcequota["spec"]["hard"]
         assert (
             hard["requests.cpu"] == "1"
         ), f"Expected requests.cpu to be '1', but got '{hard['requests.cpu']}'."
@@ -45,27 +50,35 @@ class TestCheck:
             "ResourceQuota '%s' has the correct hard limits.", resourcequota_name
         )
 
-    def test_002_check_pod_client(self, json_input):
-        k8s_client = configure_k8s_client(json_input)
+    def test_002_check_pod_kubectl(self, json_input):
+        kube_config = build_kube_config(
+            json_input["cert_file"], json_input["key_file"], json_input["host"]
+        )
         namespace = json_input["namespace"]
         pod_name = "resource-pod"
 
-        # 验证 Pod
-        try:
-            logging.info(
-                "Checking Pod '%s' in namespace '%s' using client", pod_name, namespace
-            )
-            pod = k8s_client.read_namespaced_pod(name=pod_name, namespace=namespace)
-        except Exception as e:
-            logging.error("Failed to get Pod '%s': %s", pod_name, str(e))
-            assert False, f"Failed to get Pod '{pod_name}': {str(e)}"
+        logging.info(
+            "Checking Pod '%s' in namespace '%s' using kubectl", pod_name, namespace
+        )
 
-        # 验证 Pod 中的资源请求和限制
-        resources = pod.spec.containers[0].resources
-        cpu_request = resources.requests["cpu"]
-        memory_request = resources.requests["memory"]
-        cpu_limit = resources.limits["cpu"]
-        memory_limit = resources.limits["memory"]
+        # Use kubectl to get Pod
+        command = f"kubectl get pod {pod_name} -n {namespace} -o json"
+        result = run_kubectl_command(kube_config, command)
+
+        # Parse kubectl output JSON
+        pod = json.loads(result)
+
+        # Verify Pod content
+        assert pod["apiVersion"] == "v1", "Incorrect apiVersion."
+        assert pod["kind"] == "Pod", "Incorrect kind."
+        assert pod["metadata"]["name"] == pod_name, "Incorrect metadata.name."
+
+        # Verify resource requests and limits in Pod
+        resources = pod["spec"]["containers"][0]["resources"]
+        cpu_request = resources["requests"]["cpu"]
+        memory_request = resources["requests"]["memory"]
+        cpu_limit = resources["limits"]["cpu"]
+        memory_limit = resources["limits"]["memory"]
 
         assert cpu_request in [
             "0.5",

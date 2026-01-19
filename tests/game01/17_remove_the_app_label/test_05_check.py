@@ -2,35 +2,10 @@
 import json
 import logging
 
-from kubernetes.client.rest import ApiException
-
-from tests.helper.k8s_client_helper import configure_k8s_client
 from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
 
-
 class TestCheck:
-    def test_001_check_no_pods_with_app_label_with_library(self, json_input):
-        k8s_client = configure_k8s_client(json_input)
-        pod_namespace = json_input["namespace"]
-
-        try:
-            pods = k8s_client.list_namespaced_pod(namespace=pod_namespace)
-            for pod in pods.items:
-                assert (
-                    "app" not in pod.metadata.labels
-                ), f"Found Pod '{pod.metadata.name}' with label 'app'"
-            logging.info(
-                "No Pods with the label 'app' found in namespace '%s'", pod_namespace
-            )
-        except ApiException as e:
-            if e.status == 404:
-                logging.info(
-                    "No pods found in namespace '%s', skipping check.", pod_namespace
-                )
-            else:
-                raise
-
-    def test_002_verify_no_pods_with_app_label_with_kubectl(self, json_input):
+    def test_001_verify_no_pods_with_app_label_with_kubectl(self, json_input):
         logging.debug("Starting test_002_verify_no_pods_with_app_label_with_kubectl")
         kube_config = build_kube_config(
             json_input["cert_file"], json_input["key_file"], json_input["host"]
