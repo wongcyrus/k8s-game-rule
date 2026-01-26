@@ -10,5 +10,16 @@
         "--rootdir=${workspaceFolder}",
         "--maxprocesses=1",
     ],
-    "python.envFile": "${workspaceFolder}/.env"
+    "python.envFile": "${workspaceFolder}/.env",
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "terminal.integrated.env.linux": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+    },
+    "terminal.integrated.env.osx": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+    },
+    "terminal.integrated.env.windows": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+    }
 }
