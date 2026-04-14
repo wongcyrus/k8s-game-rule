@@ -1,0 +1,71 @@
+{
+  "task_id": "XX",
+  "title": "Task Title Here",
+  "description": "Detailed description of what the user will learn and accomplish in this task.",
+  "difficulty": "beginner",
+  "estimated_minutes": 10,
+  "phases": [
+    {
+      "id": "setup",
+      "name": "Setup",
+      "description": "Initialize the task environment and prepare resources",
+      "test_file": "test_01_setup.py",
+      "required": true,
+      "auto_run": false,
+      "timeout_seconds": 30,
+      "max_attempts": 3,
+      "points": 0
+    },
+    {
+      "id": "ready",
+      "name": "Ready",
+      "description": "Verify prerequisites and environment readiness (optional phase)",
+      "test_file": "test_02_ready.py",
+      "required": true,
+      "auto_run": false,
+      "timeout_seconds": 30,
+      "max_attempts": 3,
+      "points": 5
+    },
+    {
+      "id": "challenge",
+      "name": "Challenge",
+      "description": "Present the main task challenge (optional phase)",
+      "test_file": "test_04_challenge.py",
+      "required": true,
+      "auto_run": false,
+      "timeout_seconds": 30,
+      "max_attempts": 3,
+      "points": 10
+    },
+    {
+      "id": "check",
+      "name": "Check",
+      "description": "Validate the user's solution and verify correctness",
+      "test_file": "test_05_check.py",
+      "required": true,
+      "auto_run": false,
+      "timeout_seconds": 30,
+      "max_attempts": 3,
+      "points": 20
+    },
+    {
+      "id": "cleanup",
+      "name": "Cleanup",
+      "description": "Remove created resources and clean up the environment",
+      "test_file": "test_06_cleanup.py",
+      "required": false,
+      "auto_run": true,
+      "timeout_seconds": 30,
+      "max_attempts": 1,
+      "points": 0
+    }
+  ],
+  "prerequisites": [],
+  "tags": ["kubernetes", "category", "difficulty-level"],
+  "hints": [
+    "Hint 1: Provide helpful guidance",
+    "Hint 2: Suggest useful commands",
+    "Hint 3: Point to relevant documentation"
+  ]
+}

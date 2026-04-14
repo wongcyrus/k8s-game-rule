@@ -42,12 +42,9 @@ aws configure set aws_session_token <Session Token>
 
 Change .env 
 ```
-SESSION_FROM_DYNAMODB=True
-SESSION_TABLE_NAME=k8s-grader-api-SessionTable-XXXX
 EMAIL=abcd@vtc.edu.hk
 ```
-SESSION_TABLE_NAME is the grader from SessionTable.
-EMAIL is the testing account email.
+EMAIL is the testing account email (used to generate student_id in session templates).
 
 ## Running test in command line
 Run all tasks
@@ -56,7 +53,7 @@ pytest --import-mode=importlib --rootdir=.
 ```
 Run single task
 ```
-pytest --import-mode=importlib --rootdir=. tests/game01/02_create_namespace/
+pytest --import-mode=importlib --rootdir=. tests/game02/
 ```
 To skip answer test
 ```

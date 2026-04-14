@@ -1,0 +1,63 @@
+{
+  "task_id": "02_create_namespace",
+  "title": "02 Create Namespace",
+  "description": "Create a namespace called '{{namespace}}'.",
+  "difficulty": "beginner",
+  "estimated_minutes": 20,
+  "phases": [
+    {
+      "id": "setup",
+      "name": "Setup",
+      "description": "Initialize the task environment",
+      "points": 0,
+      "required": true,
+      "auto_run": false,
+      "timeout_seconds": 30,
+      "max_attempts": 3,
+      "test_file": "test_01_setup.py"
+    },
+    {
+      "id": "answer",
+      "name": "Answer",
+      "description": "Provide the solution",
+      "points": 10,
+      "required": true,
+      "auto_run": false,
+      "timeout_seconds": 30,
+      "max_attempts": 3,
+      "test_file": "test_03_answer.py"
+    },
+    {
+      "id": "check",
+      "name": "Check",
+      "description": "Verify the solution is correct",
+      "points": 20,
+      "required": true,
+      "auto_run": false,
+      "timeout_seconds": 30,
+      "max_attempts": 3,
+      "test_file": "test_05_check.py"
+    },
+    {
+      "id": "cleanup",
+      "name": "Cleanup",
+      "description": "Clean up task resources",
+      "points": 0,
+      "required": false,
+      "auto_run": true,
+      "timeout_seconds": 30,
+      "max_attempts": 1,
+      "test_file": "test_06_cleanup.py"
+    }
+  ],
+  "prerequisites": [],
+  "tags": [
+    "kubernetes",
+    "kubectl"
+  ],
+  "hints": [
+    "Read the instruction carefully",
+    "Use kubectl commands to complete the task",
+    "Check the test results for detailed feedback"
+  ]
+}

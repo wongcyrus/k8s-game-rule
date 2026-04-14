@@ -163,3 +163,5 @@ kubectl
 k8s-configure/**.crt 
 k8s-configure/**.key
 **.gen.yaml
+tests/game02/**
+unsuccessful/**
