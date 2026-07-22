@@ -63,8 +63,19 @@ SKIP_ANSWER_TESTS=True pytest --import-mode=importlib --rootdir=.
 Install Kubectl command tools for Unit Test
 https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/
 
-1. Update IP address in ```k8s-configure/endpoint.txt```
-2. Copy in client.crt and client.key into k8s-configure.
+1. Update the cluster endpoint in `k8s-configure/endpoint.txt`
+2. Put `client.crt` and `client.key` in `k8s-configure/`
+3. Optionally put `ca.crt` in `k8s-configure/` for localhost/private-IP Minikube endpoints
+
+Local fixture behavior:
+
+- local pytest uses rendered `session.json`
+- Lambda-style `/tmp/json_input.json` is used only inside real Lambda-mode runs
+- cert lookup order is:
+  1. `k8s-configure/`
+  2. workspace minikube cert bundle
+  3. `~/.minikube/`
+- `ca.crt` is only forced for localhost/private-IP endpoints; public proxy/tunnel hosts use normal TLS trust instead
 
 ## Core Developers
 

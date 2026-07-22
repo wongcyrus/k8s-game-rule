@@ -2,8 +2,17 @@ import logging
 import os
 import subprocess
 import tempfile
+import json
 
 from jinja2 import Environment
+
+
+class KubectlCommandError(RuntimeError):
+    def __init__(self, command, stderr, returncode):
+        self.command = command
+        self.stderr = stderr
+        self.returncode = returncode
+        super().__init__(stderr or f"kubectl command failed: {command}")
 
 
 def build_kube_config(client_certificate, client_key, endpoint, ca_certificate=None):
@@ -61,19 +70,33 @@ users:
     ).encode("utf-8")
 
 
-def run_kubectl_command(kube_config, command):
+def run_kubectl_command(kube_config, command, check=False):
     with tempfile.NamedTemporaryFile(delete=False) as temp_config:
         temp_config.write(kube_config)
         temp_config.flush()
         os.environ["KUBECONFIG"] = temp_config.name
         try:
             result = subprocess.run(
-                command, shell=True, capture_output=True, text=True, check=True
+                command, shell=True, capture_output=True, text=True, check=False
             )
-        except subprocess.CalledProcessError as e:
-            logging.info(e.stderr)
-            return e.stderr
+        finally:
+            try:
+                os.unlink(temp_config.name)
+            except FileNotFoundError:
+                pass
+
+    if result.returncode != 0:
+        error_output = result.stderr or result.stdout
+        logging.info(error_output)
+        if check:
+            raise KubectlCommandError(command, error_output, result.returncode)
+        return error_output
+
     return result.stdout
+
+
+def run_kubectl_json_command(kube_config, command, check=True):
+    return json.loads(run_kubectl_command(kube_config, command, check=check))
 
 
 def delete_namespace(json_input):

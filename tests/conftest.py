@@ -1,21 +1,41 @@
 import base64
+import ipaddress
 import json
 import logging
 import os
 import random
 import subprocess
 import time
+from urllib.parse import urlparse
 
 import pytest
 from jinja2 import Environment
 from names_generator import generate_name
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_K8S_CONFIGURE_DIR = os.path.join(PROJECT_ROOT, "k8s-configure")
+WORKSPACE_MINIKUBE_CERT_DIR = os.path.join(
+    os.path.dirname(PROJECT_ROOT),
+    "k8s-grader",
+    "k8s",
+    "minikube",
+    "minikube-client-certs",
+)
 
-def random_name(seed: int = 0) -> str:
+
+def get_student_id() -> str:
+    email = os.getenv("EMAIL", "").strip()
+    if email and "@" in email:
+        return email.split("@", 1)[0]
+    return "123456789"
+
+
+def random_name(seed: str = "") -> str:
     return generate_name(style="underscore", seed=seed).replace("_", "")
 
 
-def random_number(from_number: int, to_number: int) -> str:
+def random_number(from_number: int, to_number: int, seed: str = "") -> str:
+    random.seed(seed)
     return str(random.randint(from_number, to_number))
 
 
@@ -24,9 +44,9 @@ def base64_encode(value: str) -> str:
 
 
 func_dict = {
-    "student_id": lambda: "123456789",
-    "random_name": random_name,
-    "random_number": random_number,
+    "student_id": get_student_id,
+    "random_name": lambda: random_name(get_student_id()),
+    "random_number": lambda f, to: random_number(f, to, get_student_id()),
     "base64_encode": base64_encode,
 }
 
@@ -39,6 +59,52 @@ def render(template):
     return template_string
 
 
+def is_lambda_mode() -> bool:
+    return bool(os.getenv("AWS_LAMBDA_FUNCTION_NAME")) and os.path.exists("/tmp/json_input.json")
+
+
+def first_existing_path(*candidates: str) -> str:
+    for candidate in candidates:
+        expanded = os.path.expanduser(candidate)
+        if os.path.exists(expanded):
+            return candidate
+    return candidates[0]
+
+
+def get_local_k8s_paths() -> dict:
+    return {
+        "cert_file": first_existing_path(
+            os.path.join(PROJECT_K8S_CONFIGURE_DIR, "client.crt"),
+            os.path.join(WORKSPACE_MINIKUBE_CERT_DIR, "client.crt"),
+            "~/.minikube/profiles/minikube/client.crt",
+            "~/.minikube/cert.pem",
+        ),
+        "key_file": first_existing_path(
+            os.path.join(PROJECT_K8S_CONFIGURE_DIR, "client.key"),
+            os.path.join(WORKSPACE_MINIKUBE_CERT_DIR, "client.key"),
+            "~/.minikube/profiles/minikube/client.key",
+            "~/.minikube/key.pem",
+        ),
+        "ca_file": first_existing_path(
+            os.path.join(PROJECT_K8S_CONFIGURE_DIR, "ca.crt"),
+            os.path.join(WORKSPACE_MINIKUBE_CERT_DIR, "ca.crt"),
+            "~/.minikube/ca.crt",
+        ),
+    }
+
+
+def should_use_local_ca(host: str) -> bool:
+    hostname = urlparse(host).hostname
+    if not hostname:
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_private
+    except ValueError:
+        return False
+
+
 @pytest.fixture(scope="module", autouse=True)
 def json_input(request):
     """
@@ -47,7 +113,7 @@ def json_input(request):
     2. Local mode: Reads from session.json files with Jinja2 rendering
     """
     # Lambda mode: for running in AWS Lambda via TestRunner
-    if os.path.exists("/tmp/json_input.json"):
+    if is_lambda_mode():
         with open("/tmp/json_input.json", "r", encoding="utf-8") as file:
             json_str_input = file.read()
             result = json.loads(json_str_input)
@@ -58,11 +124,7 @@ def json_input(request):
     folder_path = os.path.dirname(test_path_name)
 
     # Read endpoint from local file
-    endpoint_file_path = os.path.join(
-        os.path.dirname(os.path.dirname(folder_path)),
-        "k8s-configure",
-        "endpoint.txt"
-    )
+    endpoint_file_path = os.path.join(PROJECT_K8S_CONFIGURE_DIR, "endpoint.txt")
     
     if os.path.exists(endpoint_file_path):
         with open(endpoint_file_path, "r", encoding="utf-8") as endpoint_file:
@@ -71,12 +133,14 @@ def json_input(request):
         # Fallback to default minikube endpoint
         host = "https://127.0.0.1:8443"
     
+    local_k8s_paths = get_local_k8s_paths()
     result = {
-        "cert_file": "~/.minikube/profiles/minikube/client.crt",
-        "key_file": "~/.minikube/profiles/minikube/client.key",
-        "ca_file": "~/.minikube/ca.crt",
+        "cert_file": local_k8s_paths["cert_file"],
+        "key_file": local_k8s_paths["key_file"],
         "host": host,
     }
+    if should_use_local_ca(host):
+        result["ca_file"] = local_k8s_paths["ca_file"]
 
     # Load session.json template and render with Jinja2
     session_json_file = os.path.join(folder_path, "session.json")
@@ -109,7 +173,7 @@ def json_input(request):
 def delay_after_answer(request):
 
     # Lambda mode: for running in AWS Lambda via TestRunner
-    if os.path.exists("/tmp/json_input.json"):
+    if is_lambda_mode():
         yield  # Test runs here
         return
     

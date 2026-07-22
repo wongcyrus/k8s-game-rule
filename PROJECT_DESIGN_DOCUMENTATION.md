@@ -451,6 +451,8 @@ echo "https://192.168.49.2:8443" > k8s-configure/endpoint.txt
 # 3. Copy certificates (Minikube)
 cp ~/.minikube/profiles/minikube/client.crt k8s-configure/
 cp ~/.minikube/profiles/minikube/client.key k8s-configure/
+# Optional for localhost/private-IP Minikube endpoints
+cp ~/.minikube/ca.crt k8s-configure/
 
 # 4. Configure environment
 cat > .env << EOF
