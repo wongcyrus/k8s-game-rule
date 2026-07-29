@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+from pathlib import Path
 
 import boto3
 import pytest
@@ -38,6 +39,48 @@ def render(template):
     return template_string
 
 
+def load_session_from_dynamodb(table, email, game, task):
+    response = table.get_item(
+        Key={
+            "email": email,
+            "gameTask": f"{game}#{task}",
+        }
+    )
+    item = response.get("Item")
+    if item and "session_data" in item:
+        return item["session_data"]
+
+    response = table.get_item(
+        Key={
+            "email": email,
+            "game": f"{game}#{task}",
+        }
+    )
+    item = response.get("Item")
+    if item and "session" in item:
+        return json.loads(item["session"])
+
+    return None
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+K8S_CONFIGURE_DIR = REPO_ROOT / "k8s-configure"
+CLIENT_CERT_PATH = K8S_CONFIGURE_DIR / "client.crt"
+CLIENT_KEY_PATH = K8S_CONFIGURE_DIR / "client.key"
+CA_CERT_PATH = K8S_CONFIGURE_DIR / "ca.crt"
+KUBECONFIG_PATH = K8S_CONFIGURE_DIR / "config.yaml"
+LEGACY_KUBECONFIG_PATH = K8S_CONFIGURE_DIR / "config"
+ENDPOINT_PATH = K8S_CONFIGURE_DIR / "endpoint.txt"
+
+
+def resolve_local_kubeconfig_path():
+    if KUBECONFIG_PATH.exists():
+        return KUBECONFIG_PATH
+    if LEGACY_KUBECONFIG_PATH.exists():
+        return LEGACY_KUBECONFIG_PATH
+    return KUBECONFIG_PATH
+
+
 @pytest.fixture(scope="module", autouse=True)
 def json_input(request):
     # for local testing
@@ -51,49 +94,63 @@ def json_input(request):
             table = dynamodb.Table(os.environ["SESSION_TABLE_NAME"])
             task = os.path.basename(folder_path)
             game = os.path.basename(os.path.dirname(folder_path))
-            response = table.get_item(
-                Key={
-                    "email": os.environ["EMAIL"],
-                    "game": f"{game}#{task}",
-                }
+            session = load_session_from_dynamodb(
+                table,
+                os.environ["EMAIL"],
+                game,
+                task,
             )
-            if "Item" in response:
-                session = json.loads(response["Item"]["session"])
+            if session is None:
+                raise RuntimeError(
+                    f"No task session found in {os.environ['SESSION_TABLE_NAME']} "
+                    f"for email={os.environ['EMAIL']} and task={game}#{task}"
+                )
+
+            host = session["$endpoint"]
+            K8S_CONFIGURE_DIR.mkdir(parents=True, exist_ok=True)
+
+            result = {"host": host}
+            kubeconfig = session.get("$kubeconfig")
+            if kubeconfig:
+                with open(KUBECONFIG_PATH, "w", encoding="utf-8") as kubeconfig_file:
+                    kubeconfig_file.write(kubeconfig)
+                result["kubeconfig_file"] = str(KUBECONFIG_PATH)
+            else:
                 client_certificate = session["$client_certificate"]
                 client_key = session["$client_key"]
-                host = session["$endpoint"]
-                with open(
-                    "/workspaces/k8s-game-rule/k8s-configure/client.crt",
-                    "w",
-                    encoding="utf-8",
-                ) as cert_file:
+                with open(CLIENT_CERT_PATH, "w", encoding="utf-8") as cert_file:
                     cert_file.write(client_certificate)
-                with open(
-                    "/workspaces/k8s-game-rule/k8s-configure/client.key",
-                    "w",
-                    encoding="utf-8",
-                ) as key_file:
+                with open(CLIENT_KEY_PATH, "w", encoding="utf-8") as key_file:
                     key_file.write(client_key)
+                result["cert_file"] = str(CLIENT_CERT_PATH)
+                result["key_file"] = str(CLIENT_KEY_PATH)
 
-                result = {
-                    "cert_file": "/workspaces/k8s-game-rule/k8s-configure/client.crt",
-                    "key_file": "/workspaces/k8s-game-rule/k8s-configure/client.key",
-                    "host": host,
-                }
-                result.update(session)
-                return result
+            ca_certificate = session.get("$ca_certificate")
+            if ca_certificate:
+                with open(CA_CERT_PATH, "w", encoding="utf-8") as ca_file:
+                    ca_file.write(ca_certificate)
+                result["ca_file"] = str(CA_CERT_PATH)
+            elif CA_CERT_PATH.exists():
+                result["ca_file"] = str(CA_CERT_PATH)
+            result.update(session)
+            return result
         else:
             with open(
-                "/workspaces/k8s-game-rule/k8s-configure/endpoint.txt",
+                ENDPOINT_PATH,
                 "r",
                 encoding="utf-8",
             ) as endpoint_file:
                 host = endpoint_file.read().strip()
             result = {
-                "cert_file": "/workspaces/k8s-game-rule/k8s-configure/client.crt",
-                "key_file": "/workspaces/k8s-game-rule/k8s-configure/client.key",
+                "ca_file": str(CA_CERT_PATH),
                 "host": host,
             }
+            local_kubeconfig_path = resolve_local_kubeconfig_path()
+            if local_kubeconfig_path.exists():
+                result["kubeconfig_file"] = str(local_kubeconfig_path)
+            else:
+                result["cert_file"] = str(CLIENT_CERT_PATH)
+                result["key_file"] = str(CLIENT_KEY_PATH)
 
             session_json_file = os.path.join(folder_path, "session.json")
             test_name = os.path.splitext(os.path.basename(test_path_name))[0]

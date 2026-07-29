@@ -4,13 +4,11 @@ import os
 
 from jinja2 import Environment
 
-from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
+from tests.helper.kubectrl_helper import build_kube_config_from_input, run_kubectl_command
 
 
 def _deploy_generic(json_input, template_file, generated_file, caller_folder):
-    kube_config = build_kube_config(
-        json_input["cert_file"], json_input["key_file"], json_input["host"]
-    )
+    kube_config = build_kube_config_from_input(json_input)
 
     template_path = os.path.join(caller_folder, template_file)
     yaml_path = os.path.join(caller_folder, generated_file)

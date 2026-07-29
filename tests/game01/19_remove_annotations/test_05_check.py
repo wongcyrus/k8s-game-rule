@@ -5,7 +5,7 @@ from subprocess import CalledProcessError
 from kubernetes.client.rest import ApiException
 
 from tests.helper.k8s_client_helper import configure_k8s_client
-from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
+from tests.helper.kubectrl_helper import build_kube_config_from_input, run_kubectl_command
 
 
 class TestCheck:
@@ -38,9 +38,7 @@ class TestCheck:
 
     def test_002_ensure_no_annotations_via_kubectl(self, json_input):
         logging.debug("Starting test_002_ensure_no_annotations_via_kubectl")
-        kube_cfg = build_kube_config(
-            json_input["cert_file"], json_input["key_file"], json_input["host"]
-        )
+        kube_cfg = build_kube_config_from_input(json_input)
 
         namespace = json_input["namespace"]
         pod_list = ["nginx1", "nginx2", "nginx3"]

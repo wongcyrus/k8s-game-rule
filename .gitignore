@@ -162,6 +162,7 @@ cython_debug/
 kubectl
 k8s-configure/**.crt 
 k8s-configure/**.key
+k8s-configure/config.yaml
 **.gen.yaml
 tests/game02/
 unsuccessful/

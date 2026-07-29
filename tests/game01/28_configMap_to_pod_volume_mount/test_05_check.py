@@ -2,7 +2,7 @@ import json
 import logging
 
 from tests.helper.k8s_client_helper import configure_k8s_client
-from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
+from tests.helper.kubectrl_helper import build_kube_config_from_input, run_kubectl_command
 
 
 class TestCheck:
@@ -52,9 +52,7 @@ class TestCheck:
 
     def test_002_check_pod_details(self, json_input):
         logging.debug("Starting test_002_check_pod_details")
-        kube_config = build_kube_config(
-            json_input["cert_file"], json_input["key_file"], json_input["host"]
-        )
+        kube_config = build_kube_config_from_input(json_input)
         namespace = json_input["namespace"]
         pod_name = "nginx-pod"
 

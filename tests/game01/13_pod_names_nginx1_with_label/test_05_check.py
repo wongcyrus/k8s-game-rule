@@ -2,7 +2,7 @@ import json
 import logging
 
 from tests.helper.k8s_client_helper import configure_k8s_client
-from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
+from tests.helper.kubectrl_helper import build_kube_config_from_input, run_kubectl_command
 
 
 class TestCheck:
@@ -18,9 +18,7 @@ class TestCheck:
 
     def test_002_pod_label_with_kubectl(self, json_input):
         logging.debug("Starting test_002_pod_label_with_kubectl")
-        kube_config = build_kube_config(
-            json_input["cert_file"], json_input["key_file"], json_input["host"]
-        )
+        kube_config = build_kube_config_from_input(json_input)
         command = "kubectl get pod nginx1 -n default -o json"
         logging.debug("Running command: %s", command)
         result = run_kubectl_command(kube_config, command)

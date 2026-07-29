@@ -1,7 +1,7 @@
 import logging
 
 from tests.helper.k8s_client_helper import configure_k8s_client
-from tests.helper.kubectrl_helper import build_kube_config, run_kubectl_command
+from tests.helper.kubectrl_helper import build_kube_config_from_input, run_kubectl_command
 
 
 class TestCheck:
@@ -14,9 +14,7 @@ class TestCheck:
         assert namespace in namespace_names, f"Namespace '{namespace}' does not exist"
 
     def test_002_namespace_exists_with_kubectl(self, json_input):
-        kube_config = build_kube_config(
-            json_input["cert_file"], json_input["key_file"], json_input["host"]
-        )
+        kube_config = build_kube_config_from_input(json_input)
         command = "kubectl get namespace"
         result = run_kubectl_command(kube_config, command)
         logging.info(result)

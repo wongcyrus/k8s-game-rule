@@ -43,10 +43,12 @@ aws configure set aws_session_token <Session Token>
 Change .env 
 ```
 SESSION_FROM_DYNAMODB=True
-SESSION_TABLE_NAME=k8s-grader-api-SessionTable-XXXX
+SESSION_TABLE_NAME=k8s-grader-api-dev-TaskStateTable-XXXX
 EMAIL=abcd@vtc.edu.hk
 ```
-SESSION_TABLE_NAME is the grader from SessionTable.
+SESSION_TABLE_NAME is the grader TaskStateTable. The local test loader reads
+task session data from `session_data` using the DynamoDB key
+`email + gameTask` (for example `game02#087_kustomize_configuration`).
 EMAIL is the testing account email.
 
 ## Running test in command line
@@ -66,8 +68,8 @@ SKIP_ANSWER_TESTS=True pytest --import-mode=importlib --rootdir=.
 Install Kubectl command tools for Unit Test
 https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/
 
-1. Update IP address in ```k8s-configure/endpoint.txt```
-2. Copy in client.crt and client.key into k8s-configure.
+1. Update the API server endpoint in `k8s-configure/endpoint.txt` (for local minikube, `https://localhost:8443`).
+2. Copy `client.crt`, `client.key`, and `ca.crt` into `k8s-configure/`.
 
 ## Core Developers
 
