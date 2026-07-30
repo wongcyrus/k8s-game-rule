@@ -65,20 +65,7 @@ def load_session_from_dynamodb(table, email, game, task):
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 K8S_CONFIGURE_DIR = REPO_ROOT / "k8s-configure"
-CLIENT_CERT_PATH = K8S_CONFIGURE_DIR / "client.crt"
-CLIENT_KEY_PATH = K8S_CONFIGURE_DIR / "client.key"
-CA_CERT_PATH = K8S_CONFIGURE_DIR / "ca.crt"
 KUBECONFIG_PATH = K8S_CONFIGURE_DIR / "config.yaml"
-LEGACY_KUBECONFIG_PATH = K8S_CONFIGURE_DIR / "config"
-ENDPOINT_PATH = K8S_CONFIGURE_DIR / "endpoint.txt"
-
-
-def resolve_local_kubeconfig_path():
-    if KUBECONFIG_PATH.exists():
-        return KUBECONFIG_PATH
-    if LEGACY_KUBECONFIG_PATH.exists():
-        return LEGACY_KUBECONFIG_PATH
-    return KUBECONFIG_PATH
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -106,51 +93,23 @@ def json_input(request):
                     f"for email={os.environ['EMAIL']} and task={game}#{task}"
                 )
 
-            host = session["$endpoint"]
             K8S_CONFIGURE_DIR.mkdir(parents=True, exist_ok=True)
-
-            result = {"host": host}
             kubeconfig = session.get("$kubeconfig")
-            if kubeconfig:
-                with open(KUBECONFIG_PATH, "w", encoding="utf-8") as kubeconfig_file:
-                    kubeconfig_file.write(kubeconfig)
-                result["kubeconfig_file"] = str(KUBECONFIG_PATH)
-            else:
-                client_certificate = session["$client_certificate"]
-                client_key = session["$client_key"]
-                with open(CLIENT_CERT_PATH, "w", encoding="utf-8") as cert_file:
-                    cert_file.write(client_certificate)
-                with open(CLIENT_KEY_PATH, "w", encoding="utf-8") as key_file:
-                    key_file.write(client_key)
-                result["cert_file"] = str(CLIENT_CERT_PATH)
-                result["key_file"] = str(CLIENT_KEY_PATH)
-
-            ca_certificate = session.get("$ca_certificate")
-            if ca_certificate:
-                with open(CA_CERT_PATH, "w", encoding="utf-8") as ca_file:
-                    ca_file.write(ca_certificate)
-                result["ca_file"] = str(CA_CERT_PATH)
-            elif CA_CERT_PATH.exists():
-                result["ca_file"] = str(CA_CERT_PATH)
+            if not kubeconfig:
+                raise RuntimeError(
+                    "SESSION_FROM_DYNAMODB=True requires session data to include $kubeconfig"
+                )
+            with open(KUBECONFIG_PATH, "w", encoding="utf-8") as kubeconfig_file:
+                kubeconfig_file.write(kubeconfig)
+            result = {"kubeconfig_file": str(KUBECONFIG_PATH)}
             result.update(session)
             return result
         else:
-            with open(
-                ENDPOINT_PATH,
-                "r",
-                encoding="utf-8",
-            ) as endpoint_file:
-                host = endpoint_file.read().strip()
-            result = {
-                "ca_file": str(CA_CERT_PATH),
-                "host": host,
-            }
-            local_kubeconfig_path = resolve_local_kubeconfig_path()
-            if local_kubeconfig_path.exists():
-                result["kubeconfig_file"] = str(local_kubeconfig_path)
-            else:
-                result["cert_file"] = str(CLIENT_CERT_PATH)
-                result["key_file"] = str(CLIENT_KEY_PATH)
+            if not KUBECONFIG_PATH.exists():
+                raise RuntimeError(
+                    f"Local testing requires kubeconfig file: {KUBECONFIG_PATH}"
+                )
+            result = {"kubeconfig_file": str(KUBECONFIG_PATH)}
 
             session_json_file = os.path.join(folder_path, "session.json")
             test_name = os.path.splitext(os.path.basename(test_path_name))[0]

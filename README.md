@@ -65,11 +65,44 @@ To skip answer test
 SKIP_ANSWER_TESTS=True pytest --import-mode=importlib --rootdir=.
 ```
 
+## Running each task on a fresh local Minikube
+Use the fresh-cluster runner when you want authoring behavior closer to test generation, where each task starts from a clean cluster.
+
+Dry-run the task selection and output plan:
+```bash
+python3 tools/run_tasks_fresh_minikube.py --game game02 --dry-run
+```
+
+Run one task with a fresh Minikube profile:
+```bash
+python3 tools/run_tasks_fresh_minikube.py --game game02 --task 087_sidecar_containers
+```
+
+Run a range of tasks and skip answer tests:
+```bash
+python3 tools/run_tasks_fresh_minikube.py --game game02 --from-task 087_sidecar_containers --to-task 201_pod_restart_policies --skip-answer
+```
+
+The runner will:
+1. Start a new Minikube profile for each task
+2. Write `k8s-configure/config.yaml` and `k8s-configure/endpoint.txt`
+3. Clear Python caches under `tests/` before the run, and clear task-local caches again before each task
+4. Run `pytest --import-mode=importlib --rootdir=. tests/<game>/<task>`
+5. Restore the previous `k8s-configure/config.yaml` and `k8s-configure/endpoint.txt` after the run finishes
+6. Save logs and JSON summaries under `.artifacts/minikube-fresh-runs/<timestamp>/`
+7. Delete the Minikube profile unless `--keep-on-fail` is used
+
+This extra cache cleanup is important after moving task folders between games, because stale `__pycache__` entries can preserve old source paths and break helpers that rely on `inspect.stack()`.
+
+This local runner behavior is different from the AWS Lambda grader path: Lambda does not clear `__pycache__` explicitly, but it clears the managed `/tmp/<game>` extracted test tree before execution, which removes stale task-local bytecode as part of deleting the whole game directory.
+
+If you already created the repo virtualenv with `./create_virtural_env.sh`, the runner will use `./venv/bin/pytest` automatically.
+
 Install Kubectl command tools for Unit Test
 https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/
 
-1. Update the API server endpoint in `k8s-configure/endpoint.txt` (for local minikube, `https://localhost:8443`).
-2. Copy `client.crt`, `client.key`, and `ca.crt` into `k8s-configure/`.
+1. Put your cluster kubeconfig in `k8s-configure/config.yaml`.
+2. For local minikube, ensure that kubeconfig points at the local API server.
 
 ## Core Developers
 

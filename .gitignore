@@ -165,4 +165,7 @@ k8s-configure/**.key
 k8s-configure/config.yaml
 **.gen.yaml
 tests/game02/
+tests/game03/
+tests/game04/
 unsuccessful/
+.artifacts/

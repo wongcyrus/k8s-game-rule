@@ -19,7 +19,17 @@ def _resolve_ca_path(client_certificate, ca_certificate=None):
     return None
 
 
+def _looks_like_kubeconfig_path(path_value):
+    if not path_value:
+        return False
+    path = Path(path_value)
+    return path.suffix in {".yaml", ".yml", ".conf"} and path.exists()
+
+
 def build_kube_config(client_certificate=None, client_key=None, endpoint=None, ca_certificate=None, bearer_token=None):
+    if _looks_like_kubeconfig_path(client_certificate):
+        return Path(client_certificate).read_bytes()
+
     cert_data = client_certificate
     key_data = client_key
     ca_data = _resolve_ca_path(client_certificate, ca_certificate) if client_certificate else ca_certificate
@@ -57,7 +67,7 @@ users:
     ).encode("utf-8")
 
 
-def run_kubectl_command(kube_config, command):
+def run_kubectl_command(kube_config, command, *, check=False):
     with tempfile.NamedTemporaryFile(delete=False) as temp_config:
         temp_config.write(kube_config)
         temp_config.flush()
@@ -67,7 +77,12 @@ def run_kubectl_command(kube_config, command):
                 command, shell=True, capture_output=True, text=True, check=True
             )
         except subprocess.CalledProcessError as e:
-            logging.info(e.stderr)
+            stderr = e.stderr or e.stdout or ""
+            logging.info(stderr)
+            if check:
+                raise AssertionError(
+                    f"kubectl command failed: {command}\n{stderr.strip()}"
+                ) from e
             return e.stderr
     return result.stdout
 
@@ -78,20 +93,11 @@ def run_kubectl_json_command(kube_config, command):
 
 
 def build_kube_config_from_input(json_input):
-    if json_input.get("kubeconfig_file"):
-        with open(json_input["kubeconfig_file"], "rb") as kubeconfig_file:
-            return kubeconfig_file.read()
-
-    if json_input.get("bearer_token"):
-        return build_kube_config(
-            endpoint=json_input["host"],
-            ca_certificate=json_input.get("ca_file"),
-            bearer_token=json_input["bearer_token"],
-        )
-
-    return build_kube_config(
-        json_input["cert_file"], json_input["key_file"], json_input["host"]
-    )
+    kubeconfig_path = json_input.get("kubeconfig_file")
+    if not kubeconfig_path:
+        raise RuntimeError("json_input must include kubeconfig_file; only config.yaml is supported")
+    with open(kubeconfig_path, "rb") as kubeconfig_file:
+        return kubeconfig_file.read()
 
 
 def delete_namespace(json_input):
