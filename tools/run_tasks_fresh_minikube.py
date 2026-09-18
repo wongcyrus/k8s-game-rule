@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -22,6 +24,18 @@ K8S_CONFIGURE_DIR = REPO_ROOT / "k8s-configure"
 KUBECONFIG_PATH = K8S_CONFIGURE_DIR / "config.yaml"
 ENDPOINT_PATH = K8S_CONFIGURE_DIR / "endpoint.txt"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".artifacts" / "minikube-fresh-runs"
+
+
+@dataclass
+class PhaseResult:
+    phase: str
+    test_file: str
+    exit_code: int
+    duration_seconds: float
+    elapsed_seconds: float
+    counts: dict[str, int]
+    failed_tests: list[str]
+    signals: list[str]
 
 
 @dataclass
@@ -39,6 +53,7 @@ class TaskResult:
     summary_file: str
     kept_profile: bool
     task_path: str
+    phase_results: list[PhaseResult] | list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass
@@ -96,6 +111,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=480,
         help="Wait timeout in seconds for minikube start.",
+    )
+    parser.add_argument(
+        "--phase-timeout",
+        type=int,
+        default=600,
+        help="Maximum runtime in seconds for each pytest phase, including cleanup.",
     )
     parser.add_argument(
         "--listen-address",
@@ -280,19 +301,22 @@ def run_command(
     timeout: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     append_command(log_file, title, command, env=env)
+    result = subprocess.run(
+        command,
+        cwd=str(cwd or REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
     with log_file.open("a", encoding="utf-8") as handle:
         handle.write("\n")
-        handle.flush()
-        result = subprocess.run(
-            command,
-            cwd=str(cwd or REPO_ROOT),
-            env=env,
-            stdout=handle,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-            timeout=timeout,
-        )
+        if result.stdout:
+            handle.write(result.stdout)
+            if not result.stdout.endswith("\n"):
+                handle.write("\n")
         handle.write(f"\nEXIT_CODE={result.returncode}\n")
     if check and result.returncode != 0:
         raise RuntimeError(f"{title} failed with exit code {result.returncode}")
@@ -381,9 +405,51 @@ def parse_failed_phases(failed_tests: Iterable[str]) -> list[str]:
     return sorted(set(phases))
 
 
+def phase_name_for_test_file(test_file: Path) -> str:
+    name = test_file.name
+    if name.startswith("test_01_"):
+        return "setup"
+    if name.startswith("test_02_"):
+        return "ready"
+    if name.startswith("test_03_"):
+        return "answer"
+    if name.startswith("test_04_"):
+        return "challenge"
+    if name.startswith("test_05_"):
+        return "check"
+    if name.startswith("test_06_"):
+        return "cleanup"
+    return name.removeprefix("test_").removesuffix(".py")
+
+
+def discover_phase_files(task_dir: Path) -> list[Path]:
+    return sorted(task_dir.glob("test_*.py"))
+
+
+def merge_counts(total: dict[str, int], counts: dict[str, int]) -> None:
+    for key, value in counts.items():
+        total[key] = total.get(key, 0) + value
+
+
+def coerce_output_text(output: str | bytes | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output
+
+
+def normalize_phase_counts(exit_code: int, counts: dict[str, int]) -> dict[str, int]:
+    normalized = dict(counts)
+    if exit_code != 0 and normalized.get("failed", 0) == 0 and normalized.get("errors", 0) == 0:
+        normalized["errors"] = 1
+    return normalized
+
+
 def detect_signals(log_text: str) -> list[str]:
     signals = []
     checks = {
+        "port_conflict": r"port is already allocated|bind .* failed",
         "timeout": r"TimeoutError|timed out",
         "pending": r"\bPending\b|ContainerCreating|CrashLoopBackOff|Init:",
         "not_found": r"not found|No resources found|does not exist",
@@ -398,6 +464,212 @@ def detect_signals(log_text: str) -> list[str]:
 
 def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _split_publish_port(value: str) -> tuple[str, int, int] | None:
+    match = re.fullmatch(r"([^:]+):(\d+):(\d+)", value.strip())
+    if not match:
+        return None
+    host, host_port_text, guest_port_text = match.groups()
+    return host, int(host_port_text), int(guest_port_text)
+
+
+def _port_is_available(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _pick_available_port(host: str) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+
+
+def _find_docker_containers_using_port(host: str, port: int) -> list[str]:
+    result = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}} {{.Ports}}"],
+        cwd=str(REPO_ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+
+    names: list[str] = []
+    patterns = (
+        f"{host}:{port}->",
+        f"0.0.0.0:{port}->",
+        f"*:{port}->",
+    )
+    for line in result.stdout.splitlines():
+        if not any(pattern in line for pattern in patterns):
+            continue
+        parts = line.split(maxsplit=1)
+        if parts:
+            names.append(parts[0])
+    return names
+
+
+def _release_conflicting_minikube_profiles(
+    *,
+    host: str,
+    port: int,
+    log_file: Path,
+    delete_timeout: int,
+) -> list[str]:
+    released_profiles: list[str] = []
+    for container_name in _find_docker_containers_using_port(host, port):
+        append_command(
+            log_file,
+            "detect publish port conflict",
+            ["docker", "ps", "--format", "{{.Names}} {{.Ports}}"],
+        )
+        with log_file.open("a", encoding="utf-8") as handle:
+            handle.write(f"CONFLICTING_CONTAINER={container_name}\n")
+        result = run_command(
+            build_minikube_delete_command(container_name),
+            log_file=log_file,
+            title=f"release conflicting minikube profile {container_name}",
+            check=False,
+            timeout=delete_timeout,
+        )
+        if result.returncode == 0:
+            released_profiles.append(container_name)
+        if _port_is_available(host, port):
+            break
+    return released_profiles
+
+
+def resolve_publish_port(value: str, *, log_file: Path, delete_timeout: int) -> tuple[str, str, list[str]]:
+    parsed = _split_publish_port(value)
+    if parsed is None:
+        return value, value, []
+
+    host, host_port, guest_port = parsed
+    if _port_is_available(host, host_port):
+        return value, value, []
+
+    released_profiles = _release_conflicting_minikube_profiles(
+        host=host,
+        port=host_port,
+        log_file=log_file,
+        delete_timeout=delete_timeout,
+    )
+    if _port_is_available(host, host_port):
+        return value, value, released_profiles
+
+    chosen_port = _pick_available_port(host)
+    resolved = f"{host}:{chosen_port}:{guest_port}"
+    return resolved, value, released_profiles
+
+
+def _phase_result_as_dict(phase_result: PhaseResult | dict[str, object]) -> dict[str, object]:
+    if isinstance(phase_result, dict):
+        return phase_result
+    return asdict(phase_result)
+
+
+def write_csv_reports(artifact_dir: Path, completed: list[TaskResult]) -> None:
+    task_report_path = artifact_dir / "aggregate-summary.csv"
+    phase_report_path = artifact_dir / "aggregate-phase-summary.csv"
+
+    with task_report_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "game",
+                "task",
+                "profile",
+                "exit_code",
+                "duration_seconds",
+                "passed",
+                "failed",
+                "errors",
+                "skipped",
+                "xfailed",
+                "failed_phases",
+                "signals",
+                "kept_profile",
+                "task_path",
+                "log_file",
+                "summary_file",
+            ],
+        )
+        writer.writeheader()
+        for item in completed:
+            writer.writerow(
+                {
+                    "game": item.game,
+                    "task": item.task,
+                    "profile": item.profile,
+                    "exit_code": item.exit_code,
+                    "duration_seconds": item.duration_seconds,
+                    "passed": item.counts.get("passed", 0),
+                    "failed": item.counts.get("failed", 0),
+                    "errors": item.counts.get("errors", 0),
+                    "skipped": item.counts.get("skipped", 0),
+                    "xfailed": item.counts.get("xfailed", 0),
+                    "failed_phases": "|".join(item.failed_phases),
+                    "signals": "|".join(item.signals),
+                    "kept_profile": item.kept_profile,
+                    "task_path": item.task_path,
+                    "log_file": item.log_file,
+                    "summary_file": item.summary_file,
+                }
+            )
+
+    with phase_report_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "game",
+                "task",
+                "profile",
+                "phase",
+                "test_file",
+                "exit_code",
+                "duration_seconds",
+                "elapsed_seconds",
+                "passed",
+                "failed",
+                "errors",
+                "skipped",
+                "xfailed",
+                "failed_tests",
+                "signals",
+            ],
+        )
+        writer.writeheader()
+        for item in completed:
+            for phase_result in item.phase_results:
+                phase_data = _phase_result_as_dict(phase_result)
+                counts = phase_data.get("counts", {})
+                writer.writerow(
+                    {
+                        "game": item.game,
+                        "task": item.task,
+                        "profile": item.profile,
+                        "phase": phase_data.get("phase", ""),
+                        "test_file": phase_data.get("test_file", ""),
+                        "exit_code": phase_data.get("exit_code", ""),
+                        "duration_seconds": phase_data.get("duration_seconds", ""),
+                        "elapsed_seconds": phase_data.get("elapsed_seconds", ""),
+                        "passed": counts.get("passed", 0) if isinstance(counts, dict) else 0,
+                        "failed": counts.get("failed", 0) if isinstance(counts, dict) else 0,
+                        "errors": counts.get("errors", 0) if isinstance(counts, dict) else 0,
+                        "skipped": counts.get("skipped", 0) if isinstance(counts, dict) else 0,
+                        "xfailed": counts.get("xfailed", 0) if isinstance(counts, dict) else 0,
+                        "failed_tests": "|".join(phase_data.get("failed_tests", [])),
+                        "signals": "|".join(phase_data.get("signals", [])),
+                    }
+                )
 
 
 def snapshot_local_access() -> LocalAccessSnapshot:
@@ -440,9 +712,10 @@ def write_aggregate(
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     write_json(artifact_dir / "aggregate-summary.json", payload)
+    write_csv_reports(artifact_dir, completed)
 
 
-def build_minikube_start_command(args: argparse.Namespace, profile: str) -> list[str]:
+def build_minikube_start_command(args: argparse.Namespace, profile: str, publish_port: str) -> list[str]:
     command = [
         "minikube",
         "start",
@@ -455,7 +728,7 @@ def build_minikube_start_command(args: argparse.Namespace, profile: str) -> list
         "--apiserver-names",
         args.apiserver_name,
         "--ports",
-        args.publish_port,
+        publish_port,
         "--cpus",
         str(args.cpus),
         "--memory",
@@ -490,8 +763,29 @@ def run_task(args: argparse.Namespace, game: str, task: str, artifact_dir: Path,
     if args.skip_answer:
         env["SKIP_ANSWER_TESTS"] = "True"
 
-    log_file.write_text(f"# Fresh Minikube task run\n# task={task}\n# profile={profile}\n", encoding="utf-8")
+    log_file.write_text(
+        (
+            f"# Fresh Minikube task run\n# task={task}\n# profile={profile}\n"
+        ),
+        encoding="utf-8",
+    )
+    resolved_publish_port, requested_publish_port, released_profiles = resolve_publish_port(
+        args.publish_port,
+        log_file=log_file,
+        delete_timeout=args.delete_timeout,
+    )
+    with log_file.open("a", encoding="utf-8") as handle:
+        handle.write(f"# requested_publish_port={requested_publish_port}\n")
+        handle.write(f"# resolved_publish_port={resolved_publish_port}\n")
+        if released_profiles:
+            handle.write(f"# released_conflicting_profiles={','.join(released_profiles)}\n")
     exit_code = 1
+    counts = {"passed": 0, "failed": 0, "errors": 0, "skipped": 0, "xfailed": 0}
+    failed_tests: list[str] = []
+    failed_phases: set[str] = set()
+    signals: set[str] = set()
+    phase_results: list[PhaseResult] = []
+    exit_code = 0
     try:
         clear_python_cache(task_dir, log_file, "clear task python cache")
         run_command(
@@ -502,7 +796,7 @@ def run_task(args: argparse.Namespace, game: str, task: str, artifact_dir: Path,
             timeout=args.delete_timeout,
         )
         run_command(
-            build_minikube_start_command(args, profile),
+            build_minikube_start_command(args, profile, resolved_publish_port),
             log_file=log_file,
             title="minikube start",
             timeout=args.start_timeout,
@@ -513,16 +807,68 @@ def run_task(args: argparse.Namespace, game: str, task: str, artifact_dir: Path,
             title="cluster preflight",
         )
         write_local_kube_access(profile, log_file)
-        pytest_command = pytest_cmd + ["--import-mode=importlib", "--rootdir=.", str(task_dir)]
-        result = run_command(
-            pytest_command,
-            log_file=log_file,
-            title="pytest task",
-            env=env,
-            cwd=REPO_ROOT,
-            check=False,
-        )
-        exit_code = result.returncode
+        phase_clock_start = time.time()
+        for phase_file in discover_phase_files(task_dir):
+            phase = phase_name_for_test_file(phase_file)
+            phase_start = time.time()
+            pytest_command = pytest_cmd + ["--import-mode=importlib", "--rootdir=.", str(phase_file)]
+            phase_output = ""
+            phase_exit_code = 0
+            phase_failed_tests: list[str] = []
+            phase_signals: list[str] = []
+            try:
+                result = run_command(
+                    pytest_command,
+                    log_file=log_file,
+                    title=f"pytest phase: {phase}",
+                    env=env,
+                    cwd=REPO_ROOT,
+                    check=False,
+                    timeout=args.phase_timeout,
+                )
+                phase_output = coerce_output_text(result.stdout)
+                phase_exit_code = result.returncode
+            except subprocess.TimeoutExpired as exc:
+                phase_output = coerce_output_text(exc.stdout)
+                phase_exit_code = 124
+                timeout_failed_test = (
+                    f"FAILED {phase_file} - phase timed out after {args.phase_timeout} seconds"
+                )
+                phase_failed_tests = [timeout_failed_test]
+                phase_signals = ["timeout"]
+                with log_file.open("a", encoding="utf-8") as handle:
+                    handle.write("\n")
+                    if phase_output:
+                        handle.write(phase_output)
+                        if not phase_output.endswith("\n"):
+                            handle.write("\n")
+                    handle.write(f"PHASE_TIMEOUT_SECONDS={args.phase_timeout}\n")
+                    handle.write(f"TIMEOUT_TEST_FILE={phase_file}\n")
+                    handle.write(f"EXIT_CODE={phase_exit_code}\n")
+            phase_duration = round(time.time() - phase_start, 2)
+            phase_counts = normalize_phase_counts(phase_exit_code, parse_counts(phase_output))
+            if not phase_failed_tests:
+                phase_failed_tests = parse_failed_tests(phase_output)
+            if not phase_signals:
+                phase_signals = detect_signals(phase_output)
+            merge_counts(counts, phase_counts)
+            failed_tests.extend(phase_failed_tests)
+            failed_phases.update(parse_failed_phases(phase_failed_tests))
+            signals.update(phase_signals)
+            phase_results.append(
+                PhaseResult(
+                    phase=phase,
+                    test_file=phase_file.name,
+                    exit_code=phase_exit_code,
+                    duration_seconds=phase_duration,
+                    elapsed_seconds=round(time.time() - phase_clock_start, 2),
+                    counts=phase_counts,
+                    failed_tests=phase_failed_tests,
+                    signals=phase_signals,
+                )
+            )
+            if phase_exit_code != 0:
+                exit_code = phase_exit_code
     except Exception as exc:  # noqa: BLE001
         with log_file.open("a", encoding="utf-8") as handle:
             handle.write(f"\nUNHANDLED_ERROR={exc}\n")
@@ -546,8 +892,21 @@ def run_task(args: argparse.Namespace, game: str, task: str, artifact_dir: Path,
 
     duration = round(time.time() - start_time, 2)
     log_text = log_file.read_text(encoding="utf-8", errors="replace")
-    counts = parse_counts(log_text)
-    failed_tests = parse_failed_tests(log_text)
+    if not phase_results:
+        signals.update(detect_signals(log_text))
+        failed_phases.add("infrastructure")
+        phase_results.append(
+            PhaseResult(
+                phase="infrastructure",
+                test_file="",
+                exit_code=exit_code,
+                duration_seconds=duration,
+                elapsed_seconds=duration,
+                counts={"passed": 0, "failed": 0, "errors": 1 if exit_code != 0 else 0, "skipped": 0, "xfailed": 0},
+                failed_tests=[],
+                signals=sorted(signals),
+            )
+        )
     failed_file.write_text("\n".join(failed_tests) + ("\n" if failed_tests else ""), encoding="utf-8")
     payload = TaskResult(
         game=game,
@@ -557,8 +916,9 @@ def run_task(args: argparse.Namespace, game: str, task: str, artifact_dir: Path,
         duration_seconds=duration,
         counts=counts,
         failed_tests=failed_tests,
-        failed_phases=parse_failed_phases(failed_tests),
-        signals=detect_signals(log_text),
+        failed_phases=sorted(failed_phases),
+        signals=sorted(signals),
+        phase_results=phase_results,
         log_file=str(log_file),
         summary_file=str(summary_file),
         kept_profile=kept_profile,
@@ -589,6 +949,7 @@ def main() -> int:
         "kubernetes_version": args.kubernetes_version,
         "delete_timeout": args.delete_timeout,
         "start_timeout": args.start_timeout,
+        "phase_timeout": args.phase_timeout,
         "listen_address": args.listen_address,
         "apiserver_name": args.apiserver_name,
         "publish_port": args.publish_port,
@@ -626,6 +987,15 @@ def main() -> int:
                         "exit_code": result.exit_code,
                         "duration_seconds": result.duration_seconds,
                         "counts": result.counts,
+                        "phase_results": [
+                            {
+                                "phase": phase_result["phase"] if isinstance(phase_result, dict) else phase_result.phase,
+                                "duration_seconds": phase_result["duration_seconds"] if isinstance(phase_result, dict) else phase_result.duration_seconds,
+                                "elapsed_seconds": phase_result["elapsed_seconds"] if isinstance(phase_result, dict) else phase_result.elapsed_seconds,
+                                "exit_code": phase_result["exit_code"] if isinstance(phase_result, dict) else phase_result.exit_code,
+                            }
+                            for phase_result in result.phase_results
+                        ],
                         "failed_phases": result.failed_phases,
                         "signals": result.signals,
                         "kept_profile": result.kept_profile,

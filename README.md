@@ -83,11 +83,16 @@ Run a range of tasks and skip answer tests:
 python3 tools/run_tasks_fresh_minikube.py --game game02 --from-task 087_sidecar_containers --to-task 201_pod_restart_policies --skip-answer
 ```
 
+Override the default 10-minute timeout for each pytest phase:
+```bash
+python3 tools/run_tasks_fresh_minikube.py --game game02 --task 087_sidecar_containers --phase-timeout 600
+```
+
 The runner will:
 1. Start a new Minikube profile for each task
 2. Write `k8s-configure/config.yaml` and `k8s-configure/endpoint.txt`
 3. Clear Python caches under `tests/` before the run, and clear task-local caches again before each task
-4. Run `pytest --import-mode=importlib --rootdir=. tests/<game>/<task>`
+4. Run each `test_0X_*.py` pytest phase separately, with a default maximum runtime of 10 minutes per phase
 5. Restore the previous `k8s-configure/config.yaml` and `k8s-configure/endpoint.txt` after the run finishes
 6. Save logs and JSON summaries under `.artifacts/minikube-fresh-runs/<timestamp>/`
 7. Delete the Minikube profile unless `--keep-on-fail` is used
