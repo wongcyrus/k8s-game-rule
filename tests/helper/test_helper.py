@@ -21,7 +21,7 @@ def _deploy_generic(json_input, template_file, generated_file, caller_folder):
         with open(yaml_path, "w", encoding="utf-8") as file:
             file.write(yaml_content)
 
-    command = f"kubectl apply -f {yaml_path}"
+    command = f"kubectl apply --validate=false -f {yaml_path}"
     result = run_kubectl_command(kube_config, command, check=True)
     logging.info(result)
 
